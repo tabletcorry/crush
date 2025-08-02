@@ -2,7 +2,7 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,25 +26,18 @@ func TestMain(m *testing.M) {
 }
 
 func TestOpenAIClientStreamChoices(t *testing.T) {
-	// Create a mock server that returns Server-Sent Events with empty choices
-	// This simulates the 🤡 behavior when a server returns 200 instead of 404
+	// Create a mock server that streams minimal responses events
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 
-		emptyChoicesChunk := map[string]any{
-			"id":      "chat-completion-test",
-			"object":  "chat.completion.chunk",
-			"created": time.Now().Unix(),
-			"model":   "test-model",
-			"choices": []any{}, // Empty choices array that causes panic
-		}
-
-		jsonData, _ := json.Marshal(emptyChoicesChunk)
-		w.Write([]byte("data: " + string(jsonData) + "\n\n"))
-		w.Write([]byte("data: [DONE]\n\n"))
+		delta := `{"type":"response.output_text.delta","content_index":0,"delta":"","item_id":"it","logprobs":[],"output_index":0,"sequence_number":0}`
+		errEvt := `{"type":"error","code":"","message":"oops","param":"","sequence_number":1}`
+		fmt.Fprintf(w, "data: %s\n\n", delta)
+		fmt.Fprintf(w, "data: %s\n\n", errEvt)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
 
