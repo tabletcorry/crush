@@ -409,7 +409,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		agentMessage, toolResults, err := a.streamAndHandleEvents(ctx, sessionID, msgHistory)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "")
+				agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "", nil, 0)
 				a.messages.Update(context.Background(), agentMessage)
 				return a.err(ErrRequestCancelled)
 			}
@@ -425,7 +425,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		}
 		if agentMessage.FinishReason() == "" {
 			// Kujtim: could not track down where this is happening but this means its cancelled
-			agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "")
+			agentMessage.AddFinish(message.FinishReasonCanceled, "Request cancelled", "", nil, 0)
 			_ = a.messages.Update(context.Background(), agentMessage)
 			return a.err(ErrRequestCancelled)
 		}
@@ -598,7 +598,7 @@ out:
 }
 
 func (a *agent) finishMessage(ctx context.Context, msg *message.Message, finishReason message.FinishReason, message, details string) {
-	msg.AddFinish(finishReason, message, details)
+	msg.AddFinish(finishReason, message, details, nil, 0)
 	_ = a.messages.Update(ctx, *msg)
 }
 
@@ -638,20 +638,30 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 	case provider.EventComplete:
 		assistantMsg.FinishThinking()
 		assistantMsg.SetToolCalls(event.Response.ToolCalls)
-		assistantMsg.AddFinish(event.Response.FinishReason, "", "")
+		cost, err := a.TrackUsage(ctx, sessionID, a.Model(), event.Response.Usage)
+		if err != nil {
+			return err
+		}
+		usage := message.TokenUsage{
+			InputTokens:         event.Response.Usage.InputTokens,
+			OutputTokens:        event.Response.Usage.OutputTokens,
+			CacheCreationTokens: event.Response.Usage.CacheCreationTokens,
+			CacheReadTokens:     event.Response.Usage.CacheReadTokens,
+		}
+		assistantMsg.AddFinish(event.Response.FinishReason, "", "", &usage, cost)
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
 			return fmt.Errorf("failed to update message: %w", err)
 		}
-		return a.TrackUsage(ctx, sessionID, a.Model(), event.Response.Usage)
+		return nil
 	}
 
 	return nil
 }
 
-func (a *agent) TrackUsage(ctx context.Context, sessionID string, model catwalk.Model, usage provider.TokenUsage) error {
+func (a *agent) TrackUsage(ctx context.Context, sessionID string, model catwalk.Model, usage provider.TokenUsage) (float64, error) {
 	sess, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return 0, fmt.Errorf("failed to get session: %w", err)
 	}
 
 	cost := model.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
@@ -665,9 +675,9 @@ func (a *agent) TrackUsage(ctx context.Context, sessionID string, model catwalk.
 
 	_, err = a.sessions.Save(ctx, sess)
 	if err != nil {
-		return fmt.Errorf("failed to save session: %w", err)
+		return 0, fmt.Errorf("failed to save session: %w", err)
 	}
-	return nil
+	return cost, nil
 }
 
 func (a *agent) Summarize(ctx context.Context, sessionID string) error {
