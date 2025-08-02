@@ -286,6 +286,7 @@
           "type": "string",
           "enum": [
             "openai",
+            "openai-responses",
             "anthropic",
             "gemini",
             "azure",

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,11 +18,25 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_, err := config.Init(".", true)
+	// Populate provider cache to avoid network calls during config initialization.
+	dir, err := os.MkdirTemp("", "crush-test")
 	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_DATA_HOME", dir)
+	cacheDir := filepath.Join(dir, "crush")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		panic(err)
+	}
+	cacheFile := filepath.Join(cacheDir, "providers.json")
+	// Minimal provider list with OpenAI provider.
+	data := `[{"id":"openai","name":"OpenAI","type":"openai","api_endpoint":"","models":[{"id":"test-model","name":"test-model"}]}]`
+	if err := os.WriteFile(cacheFile, []byte(data), 0o644); err != nil {
+		panic(err)
+	}
+	if _, err := config.Init(".", true); err != nil {
 		panic("Failed to initialize config: " + err.Error())
 	}
-
 	os.Exit(m.Run())
 }
 
