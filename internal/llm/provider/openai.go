@@ -17,6 +17,7 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/responses"
 	"github.com/openai/openai-go/shared"
 )
 
@@ -254,6 +255,9 @@ func (o *openaiClient) preparedParams(messages []openai.ChatCompletionMessagePar
 }
 
 func (o *openaiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (response *ProviderResponse, err error) {
+	if o.providerOptions.useResponsesAPI {
+		return o.sendResponses(ctx, messages, tools)
+	}
 	params := o.preparedParams(o.convertMessages(messages), o.convertTools(tools))
 	attempts := 0
 	for {
@@ -306,6 +310,9 @@ func (o *openaiClient) send(ctx context.Context, messages []message.Message, too
 }
 
 func (o *openaiClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
+	if o.providerOptions.useResponsesAPI {
+		return o.streamResponses(ctx, messages, tools)
+	}
 	params := o.preparedParams(o.convertMessages(messages), o.convertTools(tools))
 	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
 		IncludeUsage: openai.Bool(true),
@@ -557,6 +564,196 @@ func (o *openaiClient) usage(completion openai.ChatCompletion) TokenUsage {
 		CacheCreationTokens: 0, // OpenAI doesn't provide this directly
 		CacheReadTokens:     cachedTokens,
 	}
+}
+
+func (o *openaiClient) convertMessagesResponses(messages []message.Message) []responses.ResponseInputItemUnionParam {
+	var items []responses.ResponseInputItemUnionParam
+
+	for _, msg := range messages {
+		switch msg.Role {
+		case message.User:
+			items = append(items, responses.ResponseInputItemParamOfMessage(msg.Content().String(), responses.EasyInputMessageRoleUser))
+		case message.Assistant:
+			if msg.Content().String() != "" {
+				items = append(items, responses.ResponseInputItemParamOfMessage(msg.Content().String(), responses.EasyInputMessageRoleAssistant))
+			}
+			if len(msg.ToolCalls()) > 0 {
+				for _, call := range msg.ToolCalls() {
+					items = append(items, responses.ResponseInputItemParamOfFunctionCall(call.Input, call.ID, call.Name))
+				}
+			}
+		case message.Tool:
+			for _, result := range msg.ToolResults() {
+				items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(result.ToolCallID, result.Content))
+			}
+		}
+	}
+
+	return items
+}
+
+func (o *openaiClient) convertToolsResponses(tools []tools.BaseTool) []responses.ToolUnionParam {
+	openaiTools := make([]responses.ToolUnionParam, len(tools))
+	for i, tool := range tools {
+		info := tool.Info()
+		t := responses.ToolParamOfFunction(info.Name, map[string]any{
+			"type":       "object",
+			"properties": info.Parameters,
+			"required":   info.Required,
+		}, false)
+		if t.OfFunction != nil {
+			t.OfFunction.Description = param.NewOpt(info.Description)
+		}
+		openaiTools[i] = t
+	}
+	return openaiTools
+}
+
+func (o *openaiClient) preparedResponseParams(messages []responses.ResponseInputItemUnionParam, tools []responses.ToolUnionParam) responses.ResponseNewParams {
+	model := o.providerOptions.model(o.providerOptions.modelType)
+	cfg := config.Get()
+
+	modelConfig := cfg.Models[config.SelectedModelTypeLarge]
+	if o.providerOptions.modelType == config.SelectedModelTypeSmall {
+		modelConfig = cfg.Models[config.SelectedModelTypeSmall]
+	}
+
+	reasoningEffort := modelConfig.ReasoningEffort
+
+	systemMessage := o.providerOptions.systemMessage
+	if o.providerOptions.systemPromptPrefix != "" {
+		systemMessage = o.providerOptions.systemPromptPrefix + "\n" + systemMessage
+	}
+
+	params := responses.ResponseNewParams{
+		Model:        shared.ResponsesModel(model.ID),
+		Input:        responses.ResponseNewParamsInputUnion{OfInputItemList: responses.ResponseInputParam(messages)},
+		Tools:        tools,
+		Instructions: param.NewOpt(systemMessage),
+	}
+
+	maxTokens := model.DefaultMaxTokens
+	if modelConfig.MaxTokens > 0 {
+		maxTokens = modelConfig.MaxTokens
+	}
+	if o.providerOptions.maxTokens > 0 {
+		maxTokens = o.providerOptions.maxTokens
+	}
+	params.MaxOutputTokens = param.NewOpt(maxTokens)
+
+	if model.CanReason {
+		params.Reasoning = shared.ReasoningParam{
+			Effort: shared.ReasoningEffort(reasoningEffort),
+		}
+	}
+
+	return params
+}
+
+func (o *openaiClient) toolCallsResponses(resp responses.Response) []message.ToolCall {
+	var calls []message.ToolCall
+	for _, item := range resp.Output {
+		if item.Type == "function_call" {
+			calls = append(calls, message.ToolCall{
+				ID:       item.CallID,
+				Name:     item.Name,
+				Input:    item.Arguments,
+				Type:     "function",
+				Finished: true,
+			})
+		}
+	}
+	return calls
+}
+
+func (o *openaiClient) usageResponses(resp responses.Response) TokenUsage {
+	usage := resp.Usage
+	cached := usage.InputTokensDetails.CachedTokens
+	input := usage.InputTokens - cached
+	return TokenUsage{
+		InputTokens:         input,
+		OutputTokens:        usage.OutputTokens,
+		CacheCreationTokens: 0,
+		CacheReadTokens:     cached,
+	}
+}
+
+func (o *openaiClient) sendResponses(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
+	params := o.preparedResponseParams(o.convertMessagesResponses(messages), o.convertToolsResponses(tools))
+	attempts := 0
+	for {
+		attempts++
+		resp, err := o.client.Responses.New(ctx, params)
+		if err != nil {
+			retry, after, retryErr := o.shouldRetry(attempts, err)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			if retry {
+				slog.Warn("Retrying due to rate limit", "attempt", attempts, "max_retries", maxRetries)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(after) * time.Millisecond):
+					continue
+				}
+			}
+			return nil, retryErr
+		}
+		content := resp.OutputText()
+		toolCalls := o.toolCallsResponses(*resp)
+		finishReason := message.FinishReasonEndTurn
+		if len(toolCalls) > 0 {
+			finishReason = message.FinishReasonToolUse
+		}
+		return &ProviderResponse{
+			Content:      content,
+			ToolCalls:    toolCalls,
+			Usage:        o.usageResponses(*resp),
+			FinishReason: finishReason,
+		}, nil
+	}
+}
+
+func (o *openaiClient) streamResponses(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
+	params := o.preparedResponseParams(o.convertMessagesResponses(messages), o.convertToolsResponses(tools))
+	eventChan := make(chan ProviderEvent)
+	go func() {
+		stream := o.client.Responses.NewStreaming(ctx, params)
+		currentContent := ""
+		for stream.Next() {
+			ev := stream.Current()
+			switch ev.Type {
+			case "response.output_text.delta":
+				delta := ev.AsResponseOutputTextDelta()
+				eventChan <- ProviderEvent{Type: EventContentDelta, Content: delta.Delta}
+				currentContent += delta.Delta
+			case "response.completed":
+				resp := ev.Response
+				toolCalls := o.toolCallsResponses(resp)
+				finishReason := message.FinishReasonEndTurn
+				if len(toolCalls) > 0 {
+					finishReason = message.FinishReasonToolUse
+				}
+				eventChan <- ProviderEvent{
+					Type: EventComplete,
+					Response: &ProviderResponse{
+						Content:      currentContent,
+						ToolCalls:    toolCalls,
+						Usage:        o.usageResponses(resp),
+						FinishReason: finishReason,
+					},
+				}
+			case "error":
+				eventChan <- ProviderEvent{Type: EventError, Error: errors.New(ev.Message)}
+			}
+		}
+		if err := stream.Err(); err != nil {
+			eventChan <- ProviderEvent{Type: EventError, Error: err}
+		}
+		close(eventChan)
+	}()
+	return eventChan
 }
 
 func (o *openaiClient) Model() catwalk.Model {

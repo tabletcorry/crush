@@ -369,6 +369,11 @@
         "think": {
           "type": "boolean",
           "description": "Enable thinking mode for Anthropic models that support reasoning"
+        },
+        "responses_api": {
+          "type": "boolean",
+          "description": "Use the OpenAI Responses API instead of the Chat Completions API",
+          "default": false
         }
       },
       "additionalProperties": false,
