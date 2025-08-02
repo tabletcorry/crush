@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -16,33 +15,25 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
-func TestMain(m *testing.M) {
-	_, err := config.Init(".", true)
-	if err != nil {
-		panic("Failed to initialize config: " + err.Error())
-	}
-
-	os.Exit(m.Run())
-}
-
-func TestOpenAIClientStreamChoices(t *testing.T) {
-	// Create a mock server that returns Server-Sent Events with empty choices
-	// This simulates the 🤡 behavior when a server returns 200 instead of 404
+func TestOpenAIClientStream(t *testing.T) {
+	// Create a mock server that returns a minimal Responses stream
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
 
-		emptyChoicesChunk := map[string]any{
-			"id":      "chat-completion-test",
-			"object":  "chat.completion.chunk",
-			"created": time.Now().Unix(),
-			"model":   "test-model",
-			"choices": []any{}, // Empty choices array that causes panic
+		deltaEvent := map[string]any{
+			"type":            "response.output_text.delta",
+			"content_index":   0,
+			"delta":           "hi",
+			"item_id":         "msg1",
+			"logprobs":        []any{},
+			"output_index":    0,
+			"sequence_number": 0,
 		}
 
-		jsonData, _ := json.Marshal(emptyChoicesChunk)
+		jsonData, _ := json.Marshal(deltaEvent)
 		w.Write([]byte("data: " + string(jsonData) + "\n\n"))
 		w.Write([]byte("data: [DONE]\n\n"))
 	}))
