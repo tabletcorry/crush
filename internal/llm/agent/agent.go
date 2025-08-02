@@ -130,6 +130,9 @@ func NewAgent(
 		provider.WithModel(agentCfg.Model),
 		provider.WithSystemMessage(prompt.GetPrompt(promptID, providerCfg.ID, config.Get().Options.ContextPaths...)),
 	}
+	if cfg.Models[agentCfg.Model].UseResponsesAPI {
+		opts = append(opts, provider.WithResponsesAPI(true))
+	}
 	agentProvider, err := provider.NewProvider(*providerCfg, opts...)
 	if err != nil {
 		return nil, err
@@ -155,6 +158,9 @@ func NewAgent(
 		provider.WithModel(config.SelectedModelTypeSmall),
 		provider.WithSystemMessage(prompt.GetPrompt(prompt.PromptTitle, smallModelProviderCfg.ID)),
 	}
+	if smallModelCfg.UseResponsesAPI {
+		titleOpts = append(titleOpts, provider.WithResponsesAPI(true))
+	}
 	titleProvider, err := provider.NewProvider(*smallModelProviderCfg, titleOpts...)
 	if err != nil {
 		return nil, err
@@ -162,6 +168,9 @@ func NewAgent(
 	summarizeOpts := []provider.ProviderClientOption{
 		provider.WithModel(config.SelectedModelTypeSmall),
 		provider.WithSystemMessage(prompt.GetPrompt(prompt.PromptSummarizer, smallModelProviderCfg.ID)),
+	}
+	if smallModelCfg.UseResponsesAPI {
+		summarizeOpts = append(summarizeOpts, provider.WithResponsesAPI(true))
 	}
 	summarizeProvider, err := provider.NewProvider(*smallModelProviderCfg, summarizeOpts...)
 	if err != nil {
@@ -892,6 +901,9 @@ func (a *agent) UpdateModel() error {
 		opts := []provider.ProviderClientOption{
 			provider.WithModel(a.agentCfg.Model),
 			provider.WithSystemMessage(prompt.GetPrompt(promptID, currentProviderCfg.ID, cfg.Options.ContextPaths...)),
+		}
+		if cfg.Models[a.agentCfg.Model].UseResponsesAPI {
+			opts = append(opts, provider.WithResponsesAPI(true))
 		}
 
 		newProvider, err := provider.NewProvider(*currentProviderCfg, opts...)

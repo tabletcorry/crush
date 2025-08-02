@@ -73,6 +73,7 @@ type providerClientOptions struct {
 	extraHeaders       map[string]string
 	extraBody          map[string]any
 	extraParams        map[string]string
+	useResponsesAPI    bool
 }
 
 type ProviderClientOption func(*providerClientOptions)
@@ -135,6 +136,12 @@ func WithSystemMessage(systemMessage string) ProviderClientOption {
 func WithMaxTokens(maxTokens int64) ProviderClientOption {
 	return func(options *providerClientOptions) {
 		options.maxTokens = maxTokens
+	}
+}
+
+func WithResponsesAPI(use bool) ProviderClientOption {
+	return func(options *providerClientOptions) {
+		options.useResponsesAPI = use
 	}
 }
 

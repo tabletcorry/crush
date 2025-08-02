@@ -403,6 +403,7 @@ func (c *Config) configureSelectedModels(knownProviders []catwalk.Provider) erro
 				large.ReasoningEffort = largeModelSelected.ReasoningEffort
 			}
 			large.Think = largeModelSelected.Think
+			large.UseResponsesAPI = largeModelSelected.UseResponsesAPI
 		}
 	}
 	smallModelSelected, smallModelConfigured := c.Models[SelectedModelTypeSmall]
@@ -430,6 +431,7 @@ func (c *Config) configureSelectedModels(knownProviders []catwalk.Provider) erro
 			}
 			small.ReasoningEffort = smallModelSelected.ReasoningEffort
 			small.Think = smallModelSelected.Think
+			small.UseResponsesAPI = smallModelSelected.UseResponsesAPI
 		}
 	}
 	c.Models[SelectedModelTypeLarge] = large

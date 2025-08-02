@@ -65,6 +65,9 @@ type SelectedModel struct {
 
 	// Used by anthropic models that can reason to indicate if the model should think.
 	Think bool `json:"think,omitempty" jsonschema:"description=Enable thinking mode for Anthropic models that support reasoning"`
+
+	// Use the OpenAI Responses API instead of the Chat Completions API.
+	UseResponsesAPI bool `json:"responses_api,omitempty" jsonschema:"description=Use the OpenAI Responses API instead of the Chat Completions API,default=false"`
 }
 
 type ProviderConfig struct {
