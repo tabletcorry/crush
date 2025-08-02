@@ -395,8 +395,14 @@ func (m *assistantSectionModel) View() string {
 	}
 	modelFormatted := t.S().Muted.Render(model.Name)
 	assistant := fmt.Sprintf("%s %s %s", icon, modelFormatted, infoMsg)
+	var info string
+	if finishData.Usage != nil {
+		usage := finishData.Usage
+		info = fmt.Sprintf("in %d cached %d out %d $%.4f", usage.InputTokens, usage.CacheCreationTokens, usage.OutputTokens, finishData.Cost)
+		info = t.S().Base.Foreground(t.FgSubtle).Render(info)
+	}
 	return t.S().Base.PaddingLeft(2).Render(
-		core.Section(assistant, m.width-2),
+		core.SectionWithInfo(assistant, m.width-2, info),
 	)
 }
 
