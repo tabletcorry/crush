@@ -28,6 +28,9 @@ const (
 	EventWarning        EventType = "warning"
 )
 
+// Custom provider types.
+const TypeOpenAIResponses catwalk.Type = "openai-responses"
+
 type TokenUsage struct {
 	InputTokens         int64
 	OutputTokens        int64
@@ -179,6 +182,11 @@ func NewProvider(cfg config.ProviderConfig, opts ...ProviderClientOption) (Provi
 		return &baseProvider[OpenAIClient]{
 			options: clientOptions,
 			client:  newOpenAIClient(clientOptions),
+		}, nil
+	case TypeOpenAIResponses:
+		return &baseProvider[OpenAIResponsesClient]{
+			options: clientOptions,
+			client:  newOpenAIResponsesClient(clientOptions),
 		}, nil
 	case catwalk.TypeGemini:
 		return &baseProvider[GeminiClient]{
